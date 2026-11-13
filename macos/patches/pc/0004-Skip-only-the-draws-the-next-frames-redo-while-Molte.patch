@@ -1,0 +1,140 @@
+From 052b0d908bd59c1fde066b4bbbf001f71c3370fc Mon Sep 17 00:00:00 2001
+From: alantero <36408154+alantero@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 16:38:16 +0100
+Subject: [PATCH 4/7] Skip only the draws the next frames redo while MoltenVK
+ creates pipelines
+
+On MoltenVK a new graphics pipeline translates its shaders to Metal and
+compiles them, from tens to hundreds of milliseconds on the render
+thread, so the frame froze each time the game showed something new.
+skip_pipeline_draws leaves those draws out while their pipeline is
+created, and the macOS defaults turn it on.
+
+Beyond the small targets TakeForTarget keeps waiting, on macOS only the
+draws into a target the title has been drawing every frame skip: those
+the next frames redo, so they are gone just until the pipeline exists.
+A draw into a new target, or one drawn only now and then, can be drawn
+once and sampled for many frames, and skipped it would stay wrong (in
+Rise of a Ninja the screen went black for the whole rage mode). Those
+draws wait for their pipeline, posted in parallel with their batch.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/gpu/backend/vulkan/backend.cpp | 32 ++++++++++++++++++++++++++++++
+ src/gpu/backend/vulkan/draw.inc    | 28 +++++++++++++++++++++++++-
+ 2 files changed, 59 insertions(+), 1 deletion(-)
+
+diff --git a/src/gpu/backend/vulkan/backend.cpp b/src/gpu/backend/vulkan/backend.cpp
+index 162d501..50907a7 100644
+--- a/src/gpu/backend/vulkan/backend.cpp
++++ b/src/gpu/backend/vulkan/backend.cpp
+@@ -499,12 +499,41 @@ struct Backend::State {
+     std::unique_ptr<plume::RenderFramebuffer> framebuffer;  // The surface alone: its clears.
+     SyncState state;
+     uint64_t last_use = 0;  // Highest sequence of submitted or recorded work using it.
++#if defined(__APPLE__)
++    // The last frame that drew into it and the first frame of that run of
++    // drawn frames (State::NoteDrawn); 0: never drawn.
++    uint64_t drawn_frame = 0, drawn_since = 0;
++#endif
+     VkImage Image() const { return static_cast<plume::VulkanTexture*>(texture.get())->vk; }
+     VkImageAspectFlags Aspect() const {
+       return desc.format == SurfaceFormat::DepthStencil ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                                                         : VK_IMAGE_ASPECT_COLOR_BIT;
+     }
+   };
++#if defined(__APPLE__)
++  // The skip take of macOS (draw.inc). frame_serial counts the closed frames
++  // (CloseFrame). A run of drawn frames survives one frame without draws.
++  uint64_t frame_serial = 1;
++  void NoteDrawn(Surface& target) {
++    if (target.drawn_frame == frame_serial) return;
++    if (!target.drawn_frame || target.drawn_frame + 2 < frame_serial) target.drawn_since = frame_serial;
++    target.drawn_frame = frame_serial;
++  }
++  // Whether a draw of the skip take may skip while its pipeline is created,
++  // beyond TakeForTarget (which keeps small targets waiting): only when the
++  // next frames draw it again over what it misses, so it is gone just until
++  // its pipeline exists: a target the title has been drawing every frame (the
++  // scene, its interface, its screen-sized passes). A draw into a new target,
++  // or one drawn only now and then, may be drawn once and sampled for many
++  // frames: skipped, it stays wrong until the title draws it again. It waits
++  // for its pipeline instead (the prefetch take, posted in parallel with its
++  // batch by PrefetchPipelines).
++  static constexpr uint64_t kSkipRun = 2;  // Frames the target was drawn before.
++  bool SkipHeals(const Surface& target) const {
++    return target.drawn_frame && target.drawn_frame + 2 >= frame_serial &&
++           target.drawn_since + kSkipRun <= frame_serial;
++  }
++#endif
+   std::unordered_map<uint32_t, Surface> surfaces;
+   std::vector<Surface> retired_surfaces;  // Released, waiting for their sequence.
+   // Own textures of guest texture headers: the resolve destinations.
+@@ -1568,6 +1597,9 @@ bool Backend::CloseFrame(FrameEvent event, uint64_t& target, std::string& eviden
+   VkResult result = VK_SUCCESS;
+   if (!state_->CloseBatch(batch_reason, result)) return fail(batch_reason, result);
+   state_->pipeline_set.EndFrame();
++#if defined(__APPLE__)
++  ++state_->frame_serial;  // The skip take's frames (State::SkipHeals).
++#endif
+   target = state_->next_sequence - 1;  // The last submission.
+   const uint64_t completed = state_->completion->Completed();
+   if (!state_->completion->SetEventOnCompletion(target, std::move(event)))
+diff --git a/src/gpu/backend/vulkan/draw.inc b/src/gpu/backend/vulkan/draw.inc
+index 3f8fa06..8a2a957 100644
+--- a/src/gpu/backend/vulkan/draw.inc
++++ b/src/gpu/backend/vulkan/draw.inc
+@@ -226,11 +226,27 @@ void Backend::PrefetchPipelines(const std::vector<DrawRequest>& requests) {
+   s.prefetched_keys.assign(requests.size(), {});
+   for (size_t i = 0; i < requests.size(); ++i) {
+     const auto& r = requests[i];
++#if defined(__APPLE__)
++    // The draws of the skip take that will not skip (TakeForTarget,
++    // State::SkipHeals) take their pipelines as the prefetch take: posted here,
++    // in parallel, instead of one after another on this thread.
++    const bool skip_take = r.pipeline_take == DrawRequest::PipelineTake::kSkip;
++    if ((r.pipeline_take != DrawRequest::PipelineTake::kPrefetch && !skip_take) || !r.elements) continue;
++#else
+     if (r.pipeline_take != DrawRequest::PipelineTake::kPrefetch || !r.elements) continue;
++#endif
+     auto color = s.surfaces.find(r.color_key), depth = s.surfaces.find(r.depth_key);
+     const bool has_color = color != s.surfaces.end();
+     const bool has_depth = (r.depth_enable || r.stencil_enable) && depth != s.surfaces.end();
+     if (!has_color && !has_depth) continue;
++#if defined(__APPLE__)
++    if (skip_take) {
++      const auto& target = has_color ? color->second : depth->second;
++      if (TakeForTarget(r.pipeline_take, target.desc.width, target.desc.height) == DrawRequest::PipelineTake::kSkip &&
++          s.SkipHeals(target))
++        continue;
++    }
++#endif
+     const uint32_t samples = has_color ? color->second.desc.samples : depth->second.desc.samples;
+     const uint64_t layout_id = r.layout_id ? r.layout_id : ElementsId(*r.elements);
+     std::array<uint32_t, 21> words{};
+@@ -338,7 +354,14 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
+     // leaves the draw out of its frame: its constants and uploads below are
+     // applied, nothing is bound or drawn. A small target keeps the prefetch
+     // take (TakeForTarget).
+-    auto take = s.pipeline_set.Take(key, triple, TakeForTarget(r.pipeline_take, target.desc.width, target.desc.height));
++    auto policy = TakeForTarget(r.pipeline_take, target.desc.width, target.desc.height);
++#if defined(__APPLE__)
++    // On MoltenVK a creation costs tens to hundreds of milliseconds (the
++    // shaders go to Metal and compile). Only the draws the next frames redo
++    // skip (State::SkipHeals); the others wait for their pipeline.
++    if (policy == DrawRequest::PipelineTake::kSkip && !s.SkipHeals(target)) policy = DrawRequest::PipelineTake::kPrefetch;
++#endif
++    auto take = s.pipeline_set.Take(key, triple, policy);
+     skip_draw = take.skip;
+     // At normal priority: the draw is missing until the pipeline is ready.
+     if (take.post) s.pipeline_set.Post(key, desc, false, false);
+@@ -365,6 +388,9 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
+       if (s.pipeline_descs.emplace(key, desc).second) s.pipeline_order.push_back(key);
+     }
+   }
++#if defined(__APPLE__)
++  s.NoteDrawn(color ? *color : *depth);  // After the take: it reads the frames before.
++#endif
+   if (!ApplyDrawConstants(r.vs_constants, r.vs_constants_delta, s.vs_block) ||
+       !ApplyDrawConstants(r.ps_constants, r.ps_constants_delta, s.ps_block)) return fail("native-draw-constants");
+   // Uploads may close a full batch, so perform all of them before recording

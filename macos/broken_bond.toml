@@ -1,0 +1,23 @@
+
+# The macOS defaults over the PC port's (upstream/broken-bond-recomp/packaging/broken_bond.toml).
+# tools/build.py puts each key in place of the PC port's own; the rest are the PC port's.
+
+# The native renderer on Vulkan (MoltenVK over Metal): macOS has no Direct3D 12.
+native_backend = "vulkan"
+# Keyboard and mouse: a Mac rarely has a gamepad connected. A connected gamepad
+# still plays.
+mnk_mode = true
+# The whole screen, in its own Space: macOS applies Game Mode to a game there (the
+# CPU and GPU first, half the controller's Bluetooth latency). Option+Return, F11
+# (fn+F11) or the game menu (F1) switch to a window.
+fullscreen = true
+# 30 FPS, the game's own rate.
+frame_rate = 30
+# Straight into the game: its settings menu opens in the game with F1 (fn+F1 on a
+# MacBook keyboard). true brings back the setup screen before the game.
+show_startup_menu = false
+# A draw whose pipeline MoltenVK is still compiling (tens to hundreds of
+# milliseconds the first time the game shows something) is left out of its frame
+# instead of freezing it; only draws into screen-sized targets drawn every frame
+# skip, the others wait (Settings > Advanced > Performance).
+skip_pipeline_draws = true
