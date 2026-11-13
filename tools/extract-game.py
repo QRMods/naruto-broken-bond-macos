@@ -9,7 +9,9 @@ beside the extracted files.
 
 The XDVDFS game partition is read as the image streams past: the volume
 descriptor gives the root directory table, each directory table read gives the
-files and tables after it, and every file is written as its sectors go by.
+files and tables it lists, and every file is written as its sectors go by. The
+entries a table lists before itself (Broken Bond keeps default.xex there) are
+read in another pass.
 """
 import argparse
 import heapq
@@ -97,13 +99,22 @@ class Region:
         self.sink = None
 
 
-def extract(chunks, output):
+def extract_pass(chunks, output, resume, seeds, partition):
+    """One pass over the image: the regions of `seeds` (the volume descriptors
+    when the partition is not known yet) and every one the tables read give.
+
+    Returns what it wrote, how far the image went, the regions past its end, the
+    regions behind the stream when a table listed them (for another pass) and
+    the partition.
+    """
     order = itertools.count()
     pending = []  # (start, order, region): regions the stream has not reached.
-    for offset in PARTITIONS:
-        heapq.heappush(pending, (offset + 32 * SECTOR, next(order), Region(offset + 32 * SECTOR, 28, 'volume', offset)))
+    if partition is None:
+        for offset in PARTITIONS:
+            seeds = [*seeds, Region(offset + 32 * SECTOR, 28, 'volume', offset)]
+    for region in seeds:
+        heapq.heappush(pending, (region.start, next(order), region))
     active, missed = [], []
-    partition = None
     written = 0
     position = 0
 
@@ -130,7 +141,8 @@ def extract(chunks, output):
                 add(Region(partition + start * SECTOR, length, 'directory' if is_directory else 'file',
                            region.path / name))
         else:
-            region.sink.close()
+            if region.sink:
+                region.sink.close()
             written += region.end - region.start
 
     for chunk in chunks:
@@ -144,11 +156,15 @@ def extract(chunks, output):
                 if region.kind == 'volume' and partition is not None:
                     continue
                 if region.start < begin:
-                    missed.append(region)  # Behind the stream: a table listed it after its sectors.
+                    # Behind the stream: a table listed it after its sectors went by.
+                    missed.append(Region(region.start, region.end - region.start, region.kind, region.path))
                     continue
                 if region.kind == 'file':
                     region.path.parent.mkdir(parents=True, exist_ok=True)
-                    region.sink = region.path.open('wb')
+                    # A file an earlier extraction left whole is read past, not written again.
+                    if not (resume and region.path.is_file() and
+                            region.path.stat().st_size == region.end - region.start):
+                        region.sink = region.path.open('wb')
                 active.append(region)
             for region in list(active):
                 low, high = max(region.start + region.done, begin), min(region.end, end)
@@ -156,25 +172,39 @@ def extract(chunks, output):
                     piece = chunk[low - begin:high - begin]
                     if region.sink:
                         region.sink.write(piece)
-                    else:
+                    elif region.kind != 'file':
                         region.data += piece
                     region.done += high - low
                 if region.start + region.done >= region.end:
                     active.remove(region)
                     finish(region)
                     changed = True
-    if partition is None:
-        raise ValueError('Not an Xbox 360 disc image (no XDVDFS volume found)')
     # What the stream never reached: a file whose sectors lie past a download that stopped.
-    incomplete = []
-    for region in active + [entry[2] for entry in pending] + missed:
+    truncated = []
+    for region in active + [entry[2] for entry in pending]:
         if region.kind == 'volume':
             continue
         if region.sink:
             region.sink.close()
             region.path.unlink(missing_ok=True)
-        incomplete.append(region)
-    return written, position, incomplete
+        truncated.append(region)
+    return written, position, truncated, missed, partition
+
+
+def extract(open_chunks, output, resume=False):
+    """Every file of the image, in as many passes as the tables' order needs."""
+    written, partition, seeds, read = 0, None, [], 0
+    for _ in range(8):
+        done, read, truncated, missed, partition = extract_pass(open_chunks(), output, resume, seeds, partition)
+        written += done
+        if partition is None:
+            raise ValueError('Not an Xbox 360 disc image (no XDVDFS volume found)')
+        if not missed or truncated or (seeds and len(missed) >= len(seeds) and
+                                       {r.start for r in missed} == {r.start for r in seeds}):
+            return written, read, truncated + missed
+        print(f'{len(missed)} entries come before the table that lists them: another pass', flush=True)
+        seeds = missed
+    return written, read, missed
 
 
 def main():
@@ -183,27 +213,30 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--salvage', action='store_true',
                         help='decode an incomplete .7z as far as it goes and list the files it lacks')
+    parser.add_argument('--resume', action='store_true',
+                        help='keep the files of an earlier extraction that are already whole')
     args = parser.parse_args()
-    if args.output.exists() and any(args.output.iterdir()):
-        parser.error(f'Output already exists: {args.output}')
+    if args.output.exists() and any(args.output.iterdir()) and not args.resume:
+        parser.error(f'Output already exists: {args.output} (--resume keeps its whole files)')
     if args.source.suffix.lower() == '.7z' and args.salvage:
-        chunks = lzma2_stream(args.source)
+        open_chunks = lambda: lzma2_stream(args.source)
     elif args.source.suffix.lower() == '.7z':
         tool = shutil.which('7zz') or shutil.which('7z')
         if not tool:
             parser.error('Extracting a .7z needs 7-Zip: brew install sevenzip')
-        chunks = piped_stream([tool, 'e', '-so', str(args.source)])
+        # The disc image alone (an archive may hold a readme beside it).
+        open_chunks = lambda: piped_stream([tool, 'e', '-so', str(args.source), '-i!*.iso'])
     else:
-        chunks = file_stream(args.source)
+        open_chunks = lambda: file_stream(args.source)
     try:
-        written, read, incomplete = extract(chunks, args.output)
+        written, read, incomplete = extract(open_chunks, args.output, args.resume)
     except (ValueError, OSError, UnicodeDecodeError) as error:
         print(f'Extraction failed: {error}', file=sys.stderr)
         sys.exit(1)
     print(f'Read {read / 2**30:.2f} GiB of the image; extracted {written / 2**30:.2f} GiB to {args.output}')
     if incomplete:
         lost = sum(region.end - region.start for region in incomplete)
-        print(f'{len(incomplete)} entries ({lost / 2**30:.2f} GiB) lie past the end of the image:', file=sys.stderr)
+        print(f'{len(incomplete)} entries ({lost / 2**30:.2f} GiB) could not be read from the image:', file=sys.stderr)
         for region in sorted(incomplete, key=lambda region: region.start)[:40]:
             print(f'  {region.kind} {region.path.relative_to(args.output.parent)}', file=sys.stderr)
         sys.exit(2)

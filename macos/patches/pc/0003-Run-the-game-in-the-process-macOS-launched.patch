@@ -1,7 +1,7 @@
 From fc0c306aaa29b6aab9a9a4570dd68a1b83ecad3d Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:37:03 +0100
-Subject: [PATCH 3/7] Run the game in the process macOS launched
+Subject: [PATCH 3/8] Run the game in the process macOS launched
 
 macOS knows a process as the app only when LaunchServices starts it. The
 incident supervisor forks and executes the game as its child, which

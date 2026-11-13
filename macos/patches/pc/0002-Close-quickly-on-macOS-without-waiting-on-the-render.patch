@@ -1,7 +1,7 @@
 From 7c3de80e27dbc9d45760ffa152c14239ad87eed0 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 03:13:53 +0100
-Subject: [PATCH 2/7] Close quickly on macOS without waiting on the render
+Subject: [PATCH 2/8] Close quickly on macOS without waiting on the render
  thread
 
 On macOS the UI thread waits in CloseInOrder with the window frozen, while

@@ -1,7 +1,7 @@
 From 052b0d908bd59c1fde066b4bbbf001f71c3370fc Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:38:16 +0100
-Subject: [PATCH 4/7] Skip only the draws the next frames redo while MoltenVK
+Subject: [PATCH 4/8] Skip only the draws the next frames redo while MoltenVK
  creates pipelines
 
 On MoltenVK a new graphics pipeline translates its shaders to Metal and

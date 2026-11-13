@@ -1,7 +1,7 @@
 From f3f4a7d41de1f4f014ffc1c3d32fe10277961e78 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:39:30 +0100
-Subject: [PATCH 6/7] Keep the Vulkan pipeline cache across sessions on macOS
+Subject: [PATCH 6/8] Keep the Vulkan pipeline cache across sessions on macOS
 
 On MoltenVK a new pipeline translates its SPIR-V to Metal Shading
 Language and compiles it, tens to hundreds of milliseconds. The graphics

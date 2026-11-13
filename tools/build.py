@@ -357,14 +357,10 @@ def main():
     if args.sdk_only:
         return
     if not (GAME / 'default.xex').is_file():
-        if GAME.exists() and any(GAME.iterdir()):
-            raise RuntimeError(f'{GAME} lacks default.xex: remove it and run again to extract the game')
-        run(sys.executable, '-I', ROOT / 'tools/extract-game.py', game_source(args.source), '--output', GAME)
+        # An earlier extraction that stopped keeps its whole files (--resume).
+        run(sys.executable, '-I', ROOT / 'tools/extract-game.py', game_source(args.source), '--output', GAME, '--resume')
     # The recompiled code first: the PC port's CMake takes its sources when it configures.
     run(BUILD / 'sdk-install/bin/rexglue', 'codegen', manifest(), cwd=PC)
-    # The PC port's build reruns the codegen with its own manifest unless its
-    # stamp says the code is current: it is.
-    (PC / 'generated/default/codegen.build.stamp').touch()
     validator = spirv_val(args.jobs)
     # The PC port's own CMake, as on Linux: the native renderer on Vulkan
     # (MoltenVK), its shaders translated from game/xeshader.sdb.
@@ -375,6 +371,10 @@ def main():
         f'-DBROKENBOND_SHADER_STORE={BUILD / "shader-store"}', f'-DBROKENBOND_SPIRV_VAL={validator}',
         # Sentry reports go to the PC port's own project: a macOS build sends none.
         '-DBROKENBOND_ENABLE_SENTRY=OFF')
+    # The PC port's build reruns the codegen with its own manifest (whose game
+    # is in the PC port's folder) unless its stamp is newer than every input,
+    # the configure's own timestamp among them: the code is current.
+    (PC / 'generated/default/codegen.build.stamp').touch()
     run('cmake', '--build', BUILD / 'app', '--target', 'broken_bond', '--parallel', args.jobs)
     package()
 

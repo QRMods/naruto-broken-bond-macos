@@ -1,0 +1,66 @@
+From 61fc247645a54375947cbb88e7e4bb0a93af7f16 Mon Sep 17 00:00:00 2001
+From: alantero <36408154+alantero@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 18:02:34 +0100
+Subject: [PATCH 8/8] Ask for crash reports only in builds that send them
+
+A build with BROKENBOND_ENABLE_SENTRY=OFF (the macOS one, which must not
+report to the PC port's project) still asked over the first frame of the
+game whether to send crash reports, and listed the option in the
+settings, though it has nothing to send them with. Such a build now
+counts the answer as no and shows neither.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ cmake/sentry.cmake    | 6 ++++++
+ src/broken_bond_app.h | 3 +++
+ src/menu/settings.cpp | 2 ++
+ 3 files changed, 11 insertions(+)
+
+diff --git a/cmake/sentry.cmake b/cmake/sentry.cmake
+index 4fb14e9..bae3d18 100644
+--- a/cmake/sentry.cmake
++++ b/cmake/sentry.cmake
+@@ -14,6 +14,12 @@ if(WIN32)
+ endif()
+ target_link_libraries(broken_bond PRIVATE broken_bond_reporting)
+ if(NOT BROKENBOND_ENABLE_SENTRY)
++    # A build without Sentry sends nothing: no question at the first start, and
++    # no crash reporting option in the settings.
++    target_compile_definitions(broken_bond PRIVATE BROKENBOND_REPORTING_UNAVAILABLE=1)
++    if(TARGET broken_bond_menu_components)
++        target_compile_definitions(broken_bond_menu_components PRIVATE BROKENBOND_REPORTING_UNAVAILABLE=1)
++    endif()
+     return()
+ endif()
+ 
+diff --git a/src/broken_bond_app.h b/src/broken_bond_app.h
+index 8fdf3a4..eb516f2 100644
+--- a/src/broken_bond_app.h
++++ b/src/broken_bond_app.h
+@@ -295,6 +295,9 @@ class BrokenBondApp : public rex::ReXApp {
+   // from before the question counts as one.
+   static broken_bond::reporting::Consent CrashReportingConsent() {
+     using broken_bond::reporting::Consent;
++#ifdef BROKENBOND_REPORTING_UNAVAILABLE
++    return Consent::kRefused;  // Built without Sentry: there is nothing to send, nor to ask.
++#endif
+     if (REXCVAR_GET(crash_reporting)) return Consent::kGiven;
+     const auto source = rex::cvar::GetFlagSource("crash_reporting");
+     const bool answered = REXCVAR_GET(crash_reporting_asked) || source == rex::cvar::Source::kCommandLine ||
+diff --git a/src/menu/settings.cpp b/src/menu/settings.cpp
+index 8852d6b..0a08b16 100644
+--- a/src/menu/settings.cpp
++++ b/src/menu/settings.cpp
+@@ -382,10 +382,12 @@ std::vector<PanelRow> Settings::Rows(int group) {
+     toggle("triple_buffering", TextId::TripleBufferingLabel, TextId::TripleBufferingDescription, &GameConfig::triple_buffering);
+     toggle("skip_pipeline_draws", TextId::SkipPipelineDrawsLabel, TextId::SkipPipelineDrawsDescription,
+            &GameConfig::skip_pipeline_draws);
++#ifndef BROKENBOND_REPORTING_UNAVAILABLE  // A build without Sentry sends no reports.
+     rows.push_back({"crash_reporting", Text("crash-reporting"), Bool(config_.crash_reporting), Text("crash-reporting-help"),
+         config_.crash_reporting != initial_.crash_reporting, true, {Text("off"), Text("on")}, config_.crash_reporting ? 1 : 0,
+         [this](int value) { Change("crash_reporting", [value](GameConfig& config) {
+           config.crash_reporting = value != 0; config.crash_reporting_asked = true; }); }, {}});
++#endif
+     if (!incident::Directory().empty()) {
+       rows.push_back({"diagnostics-open", Text("diagnostics-open"), "", Text("diagnostics-help"), false, false, {}, 0, {},
+           [] { launcher_ui::OpenFolder(incident::ReportsDirectory()); }});
