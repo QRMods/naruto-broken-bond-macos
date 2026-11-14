@@ -182,10 +182,23 @@ def achievement_assets(resources):
 
 
 def app_icon(resources):
-    """The port's own icon (ui/broken_bond.png of the PC port) as the bundle's .icns."""
-    source = PC / 'ui/broken_bond.png'
-    if not source.is_file():
-        return None
+    """The bundle's .icns; its file name, or None.
+
+    A picture of whoever builds comes first: macos/assets/app-icon.png or .jpg,
+    kept out of Git (the game's cover is not this project's to publish), which
+    tools/app_icon.swift shapes as a macOS icon. Otherwise the PC port's own
+    icon (ui/broken_bond.png).
+    """
+    pictures = [ROOT / 'macos/assets' / f'app-icon.{suffix}' for suffix in ('png', 'jpg', 'jpeg')]
+    picture = next((path for path in pictures if path.is_file()), None)
+    if picture:
+        source = BUILD / 'app-icon-1024.png'
+        run('swift', ROOT / 'tools/app_icon.swift', picture, source)
+    else:
+        source = PC / 'ui/broken_bond.png'
+        if not source.is_file():
+            (resources / 'broken_bond.icns').unlink(missing_ok=True)
+            return None
     iconset = BUILD / 'broken_bond.iconset'
     if iconset.exists():
         shutil.rmtree(iconset)
