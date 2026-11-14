@@ -1,7 +1,7 @@
 From b42d5a134b765db43b9e57a7bf7489babbcd4419 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:34:23 +0100
-Subject: [PATCH 1/8] Build and run on macOS (Apple Silicon) with the native
+Subject: [PATCH 1/9] Build and run on macOS (Apple Silicon) with the native
  renderer on MoltenVK
 
 The native renderer's Vulkan backend on macOS, as one more POSIX system,

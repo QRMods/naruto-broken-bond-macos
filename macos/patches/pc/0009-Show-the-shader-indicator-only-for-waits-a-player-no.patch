@@ -1,0 +1,45 @@
+From efb89963f435008c92058d48fbc56c9a5c288dbd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Agust=C3=ADn=20Lantero=20Barreda?= <agusem@hotmail.com>
+Date: Sat, 14 Nov 2026 19:21:56 +0100
+Subject: [PATCH 9/9] Show the shader indicator only for waits a player notices
+
+The "Compiling shaders" indicator came up whenever any pipeline was being
+created and stayed 750 ms after it. On a first run that meant every few
+seconds in fights, for pipelines that finish in milliseconds and never
+hold the game up. It now shows only once compilation has gone on, with
+no pause longer than 150 ms, for a second and a half, as on a cold load,
+and still hides 750 ms after the last job.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/gpu/common/shader_activity.h | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/gpu/common/shader_activity.h b/src/gpu/common/shader_activity.h
+index d014e9c..8df9061 100644
+--- a/src/gpu/common/shader_activity.h
++++ b/src/gpu/common/shader_activity.h
+@@ -26,8 +26,22 @@ struct ShaderCompilation {
+   ShaderCompilation() { shader_jobs.fetch_add(1, std::memory_order_relaxed); }
+   ~ShaderCompilation() { NoteShaderCompiled(); shader_jobs.fetch_sub(1, std::memory_order_relaxed); }
+ };
++// The indicator is for waits a player notices: compilation that keeps going
++// without a real pause for a second and a half, like a cold load. A pipeline
++// created now and then during a fight finishes in milliseconds and stays
++// silent. Once shown, it hides 750 ms after the last job ends. Only the UI
++// thread calls this, once per menu frame.
+ inline bool ShaderCompilationVisible() {
++  constexpr int64_t kBurstGapMs = 150, kShowAfterMs = 1500, kHideAfterMs = 750;
++  static int64_t busy_since = 0;
++  static bool shown = false;
++  const auto now = ShaderClock();
+   const auto last = shader_last_finished.load(std::memory_order_relaxed);
+-  return shader_jobs.load(std::memory_order_relaxed) != 0 || (last != 0 && ShaderClock() - last < 750);
++  const int64_t idle = shader_jobs.load(std::memory_order_relaxed) != 0 ? 0 : last != 0 ? now - last : INT64_MAX;
++  if (idle > kBurstGapMs) busy_since = 0;
++  else if (busy_since == 0) busy_since = now;
++  if (busy_since != 0 && now - busy_since >= kShowAfterMs) shown = true;
++  else if (idle >= kHideAfterMs) shown = false;
++  return shown;
+ }
+ }  // namespace gpu

@@ -1,7 +1,7 @@
 From e4bd10473fb3ce333c566461cb18af3fee4651da Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:39:05 +0100
-Subject: [PATCH 5/8] Log the frame meter and slow frames on macOS
+Subject: [PATCH 5/9] Log the frame meter and slow frames on macOS
 
 For the macOS port's benchmark tools: the frame meter of
 REX_NATIVE_FPS_TITLE=1 also writes its half-second measurement to the
