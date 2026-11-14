@@ -1,4 +1,4 @@
-From 4ddca4ff8fd4f0f07dc174f3f786bbcbca09f7e1 Mon Sep 17 00:00:00 2001
+From ae3aba35c9535492ee644964c50f062b1c36ac57 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 18:02:34 +0100
 Subject: [PATCH 8/8] Ask for crash reports only in builds that send them
@@ -34,7 +34,7 @@ index 4fb14e9..bae3d18 100644
  endif()
  
 diff --git a/src/broken_bond_app.h b/src/broken_bond_app.h
-index 8fdf3a4..eb516f2 100644
+index 9a33f59..8f23452 100644
 --- a/src/broken_bond_app.h
 +++ b/src/broken_bond_app.h
 @@ -295,6 +295,9 @@ class BrokenBondApp : public rex::ReXApp {

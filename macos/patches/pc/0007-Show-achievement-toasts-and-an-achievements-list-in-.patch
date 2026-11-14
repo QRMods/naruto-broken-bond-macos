@@ -1,4 +1,4 @@
-From 4cdf87f2f5cbcc4fb56f0d6b253439c65c2fe957 Mon Sep 17 00:00:00 2001
+From 72e39dcc736c99f7b9fcd8a547a7c0fc2b428c5f Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:44:56 +0100
 Subject: [PATCH 7/8] Show achievement toasts and an achievements list in the
@@ -39,11 +39,13 @@ build, so the SDK's is not shown as well).
   while the app claims it, and SDL gives the claim back each time a
   controller closes: while the game runs it claims it again on every
   controller (menu/home_button_mac.mm). macOS 26 acts on the press as
-  well, and no app can stop it: for a game Apple has not listed for its
-  Game Overlay, gamepolicyd opens the Games app when the button is
-  released. So for a few seconds after a press the game took, the Games
-  app the system opens is closed again (hidden when it was open already)
-  and the game stays in front.
+  well, and no app can stop it: when the button is released it shows its
+  Game Overlay over a game it lists for it, or opens its Games app. So for
+  a few seconds after a press the game took, the overlay is hidden (closed
+  if it stays in front) and the Games app closed (hidden when it was open
+  already), and the game stays in front. The overlay is also what hands
+  the button to the system, so the game starts it again when another app
+  comes to the front or the game closes.
 - BROKENBOND_ACHIEVEMENT_PREVIEW shows toasts, the list or the menu, or
   acts as a Home button press, for checking the presentation; "unlock"
   unlocks one through the SDK.
@@ -51,7 +53,7 @@ build, so the SDK's is not shown as well).
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  CMakeLists.txt                 |  11 +-
- src/broken_bond_app.h          | 182 +++++++++++-
+ src/broken_bond_app.h          | 183 +++++++++++-
  src/controls/service.cpp       |   1 +
  src/controls/service.h         |   3 +
  src/menu/achievement_art.cpp   | 406 ++++++++++++++++++++++++++
@@ -61,8 +63,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/menu/achievements.cpp      | 503 +++++++++++++++++++++++++++++++++
  src/menu/achievements.h        | 103 +++++++
  src/menu/assets.cpp            |  16 ++
- src/menu/home_button.h         |  22 ++
- src/menu/home_button_mac.mm    | 128 +++++++++
+ src/menu/home_button.h         |  27 ++
+ src/menu/home_button_mac.mm    | 182 ++++++++++++
  src/menu/pad_input.cpp         |   9 +-
  src/menu/pad_input.h           |   5 +
  src/menu/render_interface.cpp  |   6 +
@@ -76,7 +78,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  ui/achievements.rml            |   2 +
  ui/overlay.rcss                |   2 +-
  ui/overlay.rml                 |   2 +-
- 26 files changed, 1733 insertions(+), 17 deletions(-)
+ 26 files changed, 1793 insertions(+), 17 deletions(-)
  create mode 100644 src/menu/achievement_art.cpp
  create mode 100644 src/menu/achievement_art.h
  create mode 100644 src/menu/achievement_sound.cpp
@@ -113,7 +115,7 @@ index 015fa0b..506ce5f 100644
      file(GLOB_RECURSE BROKENBOND_UI_FILES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ui/*)
      set_source_files_properties(src/menu/assets.cpp PROPERTIES OBJECT_DEPENDS "${BROKENBOND_UI_FILES}")
 diff --git a/src/broken_bond_app.h b/src/broken_bond_app.h
-index d0599ec..8fdf3a4 100644
+index d0599ec..9a33f59 100644
 --- a/src/broken_bond_app.h
 +++ b/src/broken_bond_app.h
 @@ -4,6 +4,7 @@
@@ -172,8 +174,11 @@ index d0599ec..8fdf3a4 100644
      ui_.Shutdown();
  #endif
      if (window()) window()->RemoveInputListener(&fullscreen_shortcuts_);
-@@ -432,6 +445,12 @@ class BrokenBondApp : public rex::ReXApp {
+@@ -430,8 +443,15 @@ class BrokenBondApp : public rex::ReXApp {
+     // OnShutdown run, so the crash reports flush first.
+     broken_bond::reporting::Close();
      broken_bond::incident::ExpectedExit("window-close");
++    broken_bond::menu::RestoreSystemOverlay();  // The Home button is the system's again.
      rex::ReXApp::OnClosing(event);
    }
 +
@@ -185,7 +190,7 @@ index d0599ec..8fdf3a4 100644
  #endif
  
   private:
-@@ -593,6 +612,8 @@ class BrokenBondApp : public rex::ReXApp {
+@@ -593,6 +613,8 @@ class BrokenBondApp : public rex::ReXApp {
        shortcut_hint_pending_ = false;
        ui_.ShowShortcutHint(shortcut_hint_);
      }
@@ -194,7 +199,7 @@ index d0599ec..8fdf3a4 100644
      const auto progress = gpu::CurrentShaderProgress();
      ui_.SetShadersVisible(menu_settings_.menu_options().shaders && gpu::ShaderCompilationVisible(), progress.pending,
                            progress.fraction);
-@@ -999,13 +1020,15 @@ class BrokenBondApp : public rex::ReXApp {
+@@ -999,13 +1021,15 @@ class BrokenBondApp : public rex::ReXApp {
    }
    void OpenGameMenu() {
      using broken_bond::menu::Text;
@@ -211,7 +216,7 @@ index d0599ec..8fdf3a4 100644
      broken_bond::menu::input_blocked = ui_.OverlayShown();
      REXLOG_INFO("[broken_bond] Game menu opened; guest input neutral");
    }
-@@ -1026,8 +1049,165 @@ class BrokenBondApp : public rex::ReXApp {
+@@ -1026,8 +1050,165 @@ class BrokenBondApp : public rex::ReXApp {
      rex::ui::AppUIDrawContext context(window()->GetActualPhysicalWidth(), window()->GetActualPhysicalHeight());
      ui_.Draw(context);
    }
@@ -1620,47 +1625,56 @@ index e2e946a..d64191c 100644
  
 diff --git a/src/menu/home_button.h b/src/menu/home_button.h
 new file mode 100644
-index 0000000..8a337bf
+index 0000000..7b195fe
 --- /dev/null
 +++ b/src/menu/home_button.h
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,27 @@
 +// The controllers' Home (Guide, PS) button on macOS. GameController hands a
 +// press to the app in front only while the app claims the button; SDL claims
 +// it when it opens a controller and gives it back when it closes one, which
 +// the game's input services do now and then. While the game runs,
 +// ClaimHomeButton claims it again on every controller, so a press always
 +// reaches the game (the achievements). macOS 26 acts on the press as well and
-+// no app can stop it: for a game Apple has not listed for its Game Overlay it
-+// opens the Games app, about half a second later, when the button is released.
-+// So after a press the game took (NoteHomePress), the Games app the system
-+// opens is closed again, or hidden when it was open already, and the game
-+// stays in front. Elsewhere both do nothing. UI (main) thread.
++// no app can stop it: about half a second later, when the button is released,
++// it shows its Game Overlay over a game it lists for it, or opens its Games
++// app. So after a press the game took (NoteHomePress), the overlay is hidden
++// again (closed if it stays in front) and the Games app closed (hidden when it
++// was open already), and the game stays in front. The closed overlay is also
++// what hands the button to the system: RestoreSystemOverlay starts it again
++// when another app comes to the front or the game closes. Elsewhere they do
++// nothing. UI (main) thread.
 +#pragma once
 +
 +namespace broken_bond::menu {
 +#ifdef __APPLE__
 +void ClaimHomeButton();
 +void NoteHomePress();
++void RestoreSystemOverlay();
 +#else
 +inline void ClaimHomeButton() {}
 +inline void NoteHomePress() {}
++inline void RestoreSystemOverlay() {}
 +#endif
 +}  // namespace broken_bond::menu
 diff --git a/src/menu/home_button_mac.mm b/src/menu/home_button_mac.mm
 new file mode 100644
-index 0000000..c945ea8
+index 0000000..de9c3c8
 --- /dev/null
 +++ b/src/menu/home_button_mac.mm
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,182 @@
 +// The controllers' Home button on macOS (home_button.h).
 +#include "menu/home_button.h"
 +
 +#import <AppKit/AppKit.h>
 +#import <Foundation/Foundation.h>
 +#import <GameController/GameController.h>
++#include <spawn.h>
++#include <sys/wait.h>
 +#include <chrono>
 +#include <string>
 +#include <rex/logging.h>
++
++extern char** environ;
 +
 +namespace broken_bond::menu {
 +namespace {
@@ -1668,13 +1682,18 @@ index 0000000..c945ea8
 +using Clock = std::chrono::steady_clock;
 +
 +int claims_logged = 0;
-+// The last press of the Home button the game took, while its window had the focus.
++// The last press of the Home button the game took, while its window had the focus,
++// on the steady clock and as an NSDate reference time (no object to retain).
 +Clock::time_point home_pressed{};
-+NSDate* home_pressed_date = nil;
++NSTimeInterval home_pressed_at = 0;
 +// The system acts when the button is released, about half a second after the
 +// game sees it pressed; a long press acts later still.
 +constexpr auto kSystemDelay = std::chrono::seconds(3);
 +NSString* const kGamesApp = @"com.apple.games";
++NSString* const kGameOverlay = @"com.apple.GameOverlayUI";
++// The game closed the Game Overlay, which is also what hands the Home button to
++// the system: until it runs again, the button does nothing outside the game.
++bool overlay_closed = false;
 +
 +// Every button of the controller the system binds to a gesture, the Home
 +// button first among them, is the game's while it is in front.
@@ -1699,29 +1718,62 @@ index 0000000..c945ea8
 +
 +bool PressedRecently() { return home_pressed != Clock::time_point{} && Clock::now() - home_pressed < kSystemDelay; }
 +
-+// macOS 26 opens its Games app with the Home button whatever the game claims,
-+// for a game Apple has not listed for its Game Overlay. Right after a press the
-+// game took, that app gives way: closed when the press opened it, hidden when
-+// it was open already, and the game is in front again.
++// macOS 26 acts on the Home button whatever the game claims: for a game it
++// shows its Game Overlay over, the overlay comes up over the game and takes the
++// controller; for another it opens its Games app. Right after a press the game
++// took, either gives way and the game is in front again: the overlay is hidden
++// (closed if it stays in front), the Games app closed when the press opened it,
++// hidden when it was open already.
 +void GiveWay(NSRunningApplication* app) {
-+  if (!app || ![app.bundleIdentifier isEqualToString:kGamesApp] || !PressedRecently() || app.terminated) return;
-+  const double since_press = home_pressed_date ? [app.launchDate timeIntervalSinceDate:home_pressed_date] : -1;
-+  const bool opened_by_press = app.launchDate && since_press > -0.5;
-+  if (opened_by_press) [app forceTerminate];
-+  else [app hide];
++  if (!app || app.terminated || !PressedRecently()) return;
++  const bool overlay = [app.bundleIdentifier isEqualToString:kGameOverlay];
++  if (!overlay && ![app.bundleIdentifier isEqualToString:kGamesApp]) return;
++  const char* done;
++  if (overlay) {
++    [app hide];
++    done = "hid the Game Overlay";
++    // A system service: if hiding did not take it from the front, it closes.
++    // Then later presses reach only the game, and RestoreSystemOverlay starts
++    // it again when the game is left.
++    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, int64_t(200 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{
++      if (app.terminated || (!app.active && app.hidden)) return;
++      [app forceTerminate];
++      overlay_closed = true;
++      REXLOG_INFO("[broken_bond] Home button: closed the Game Overlay, which stayed in front");
++    });
++  } else {
++    NSDate* launched = app.launchDate;
++    const bool opened_by_press = launched && launched.timeIntervalSinceReferenceDate > home_pressed_at - 0.5;
++    if (opened_by_press) [app forceTerminate];
++    else [app hide];
++    done = opened_by_press ? "closed the Games app" : "hid the Games app";
++  }
 +  if (@available(macOS 14.0, *)) [NSApp activate];
 +  else [NSApp activateIgnoringOtherApps:YES];
-+  REXLOG_INFO("[broken_bond] Home button: {} the Games app the system opened ({:.0f} ms after the press)",
-+              opened_by_press ? "closed" : "hid",
++  REXLOG_INFO("[broken_bond] Home button: {} the system opened ({:.0f} ms after the press)", done,
 +              std::chrono::duration<double, std::milli>(Clock::now() - home_pressed).count());
 +  home_pressed = {};  // Once per press.
 +}
 +
 +}  // namespace
 +
++void RestoreSystemOverlay() {
++  if (!overlay_closed) return;
++  overlay_closed = false;
++  if ([NSRunningApplication runningApplicationsWithBundleIdentifier:kGameOverlay].count) return;
++  // open -g starts it in the background and returns once it runs: done before
++  // the game's _Exit when the window closes.
++  const char* argv[] = {"/usr/bin/open", "-g", "-b", "com.apple.GameOverlayUI", nullptr};
++  pid_t pid = 0;
++  if (posix_spawn(&pid, argv[0], nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0) return;
++  int status = 0;
++  waitpid(pid, &status, 0);
++  REXLOG_INFO("[broken_bond] Home button: the Game Overlay runs again for the other apps");
++}
++
 +void NoteHomePress() {
 +  home_pressed = Clock::now();
-+  home_pressed_date = [NSDate date];
++  home_pressed_at = [NSDate timeIntervalSinceReferenceDate];
 +}
 +
 +void ClaimHomeButton() {
@@ -1736,7 +1788,15 @@ index 0000000..c945ea8
 +                                                    usingBlock:^(NSNotification* note) {
 +                                                      Claim(note.object);
 +                                                    }];
-+      // The Games app as soon as the system starts or raises it.
++      // Another app in front: the Home button is the system's again there. Not
++      // while the overlay or the Games app takes the front right after a press.
++      [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidResignActiveNotification
++                                                        object:nil
++                                                         queue:[NSOperationQueue mainQueue]
++                                                    usingBlock:^(NSNotification*) {
++                                                      if (!PressedRecently()) RestoreSystemOverlay();
++                                                    }];
++      // The Games app or the Game Overlay as soon as the system starts or raises it.
 +      NSNotificationCenter* workspace = [[NSWorkspace sharedWorkspace] notificationCenter];
 +      for (NSNotificationName name in @[ NSWorkspaceDidLaunchApplicationNotification,
 +                                         NSWorkspaceDidActivateApplicationNotification ]) {
@@ -1755,9 +1815,13 @@ index 0000000..c945ea8
 +    if (now - last < std::chrono::milliseconds(100)) return;
 +    last = now;
 +    // In case a notification came before the press was noted.
-+    if (PressedRecently())
++    if (PressedRecently()) {
 +      for (NSRunningApplication* app in [NSRunningApplication runningApplicationsWithBundleIdentifier:kGamesApp])
-+        if (app.active || [app.launchDate timeIntervalSinceDate:home_pressed_date] > -0.5) GiveWay(app);
++        if (app.active || (app.launchDate && app.launchDate.timeIntervalSinceReferenceDate > home_pressed_at - 0.5))
++          GiveWay(app);
++      for (NSRunningApplication* app in [NSRunningApplication runningApplicationsWithBundleIdentifier:kGameOverlay])
++        if (app.active) GiveWay(app);
++    }
 +    NSArray<GCController*>* controllers = GCController.controllers;
 +    // What the system shows the game, once per change of the controllers.
 +    static NSUInteger described = NSUIntegerMax;
