@@ -1,4 +1,4 @@
-From 61fc247645a54375947cbb88e7e4bb0a93af7f16 Mon Sep 17 00:00:00 2001
+From 4ddca4ff8fd4f0f07dc174f3f786bbcbca09f7e1 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 18:02:34 +0100
 Subject: [PATCH 8/8] Ask for crash reports only in builds that send them

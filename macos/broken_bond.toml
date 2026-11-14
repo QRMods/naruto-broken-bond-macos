@@ -18,6 +18,6 @@ frame_rate = 30
 show_startup_menu = false
 # A draw whose pipeline MoltenVK is still compiling (tens to hundreds of
 # milliseconds the first time the game shows something) is left out of its frame
-# instead of freezing it; only draws into screen-sized targets drawn every frame
-# skip, the others wait (Settings > Advanced > Performance).
+# instead of freezing it; draws into small targets (under 640x360) wait for
+# theirs (Settings > Advanced > Performance).
 skip_pipeline_draws = true

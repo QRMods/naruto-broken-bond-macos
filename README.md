@@ -252,7 +252,7 @@ The macOS-specific parts are in `macos/`:
      Metal surface, the bundled Vulkan loader and the app bundle's resources.
   2. A quick close on Cmd+Q (below).
   3. The game in the process macOS launched, which macOS knows as the app (below).
-  4. Skipping only the draws the next frames redo while MoltenVK creates pipelines (below).
+  4. Creating in parallel the pipelines that small render targets wait for (below).
   5. The frame-rate and slow-frame (`[native-hitch]`) lines in the log, for `tools/`.
   6. The pipeline cache kept across sessions (below).
   7. Achievement toasts and the achievements list (below).
@@ -272,12 +272,12 @@ which costs tens to hundreds of milliseconds on a Mac. On macOS:
 - An object whose pipeline isn't ready yet is left out for that moment instead of
   freezing the frame (`skip_pipeline_draws`, the PC port's option, on by default here).
   The pipeline compiles on other threads and the object appears as soon as it's done.
-- Only draws the next frames redraw are skipped: those into a screen-sized render
-  target the game draws every frame. A draw into a small target, a new one, or one
-  drawn only now and then waits for its pipeline instead, compiled in parallel with
-  the others of its batch. Some effects draw such a target once and reuse it for many
-  frames; skipped, they would stay wrong (in Rise of a Ninja the screen went black for
-  the whole rage mode).
+- A draw into a small render target (under 640x360) is never skipped: some effects draw
+  such a target once, a colour ramp or a lookup, and reuse it for many frames, so
+  skipped it would stay wrong (in Rise of a Ninja the screen went black for the whole
+  rage mode). Those draws wait for their pipeline, compiled in parallel with the others
+  of their batch. Making every draw into a new full-size target wait as well froze the
+  game for seconds after each load, so those draws still skip.
 - Compiled pipelines are saved in `user/cache/native-vulkan-pipelines.bin`, and the PC
   port's list of the pipelines you've seen in `user/cache/pipelines/`, so later sessions
   prepare them up front.

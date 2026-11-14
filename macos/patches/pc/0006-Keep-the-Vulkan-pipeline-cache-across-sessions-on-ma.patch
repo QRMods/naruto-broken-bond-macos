@@ -1,4 +1,4 @@
-From f3f4a7d41de1f4f014ffc1c3d32fe10277961e78 Mon Sep 17 00:00:00 2001
+From 379c2a558df84ed5dc109670d724fc59b2a39970 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:39:30 +0100
 Subject: [PATCH 6/8] Keep the Vulkan pipeline cache across sessions on macOS
@@ -39,10 +39,10 @@ index 5c9400b..015fa0b 100644
      if(BROKENBOND_NATIVE_VULKAN)
          target_sources(broken_bond PRIVATE ${BROKENBOND_NATIVE_VULKAN_SOURCES})
 diff --git a/src/gpu/backend/vulkan/backend.cpp b/src/gpu/backend/vulkan/backend.cpp
-index 50907a7..53ace09 100644
+index 162d501..9e200c0 100644
 --- a/src/gpu/backend/vulkan/backend.cpp
 +++ b/src/gpu/backend/vulkan/backend.cpp
-@@ -1232,6 +1232,7 @@ bool Backend::Shutdown(std::string& evidence) {
+@@ -1203,6 +1203,7 @@ bool Backend::Shutdown(std::string& evidence) {
      return false;
    }
    state_->pipeline_set.Stop();  // The asynchronous pipeline threads end before anything is released.

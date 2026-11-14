@@ -1,0 +1,58 @@
+From 87028c9b597d711763cd1b4bb07e925bdef0bd01 Mon Sep 17 00:00:00 2001
+From: alantero <36408154+alantero@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 16:38:16 +0100
+Subject: [PATCH 4/8] Create in parallel the pipelines small targets wait for
+ on macOS
+
+On MoltenVK a new graphics pipeline translates its shaders to Metal and
+compiles them, from tens to hundreds of milliseconds on the render
+thread, so the frame froze each time the game showed something new.
+skip_pipeline_draws leaves those draws out while their pipeline is
+created, and the macOS defaults turn it on.
+
+A draw into a small target keeps waiting for its pipeline (TakeForTarget:
+a colour ramp or a lookup drawn once and read for many frames). On macOS
+PrefetchPipelines posts those pipelines too, so a batch creates them in
+parallel instead of one after another on the render thread.
+
+Making every draw into a new target wait as well (tried first) froze the
+game for seconds after each load in Rise of a Ninja: the scene's targets
+start anew, and the whole area's pipelines were created on this thread.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/gpu/backend/vulkan/draw.inc | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/gpu/backend/vulkan/draw.inc b/src/gpu/backend/vulkan/draw.inc
+index 3f8fa06..5429ccc 100644
+--- a/src/gpu/backend/vulkan/draw.inc
++++ b/src/gpu/backend/vulkan/draw.inc
+@@ -226,11 +226,27 @@ void Backend::PrefetchPipelines(const std::vector<DrawRequest>& requests) {
+   s.prefetched_keys.assign(requests.size(), {});
+   for (size_t i = 0; i < requests.size(); ++i) {
+     const auto& r = requests[i];
++#if defined(__APPLE__)
++    // The draws of the skip take that will not skip (small targets,
++    // TakeForTarget) take their pipelines as the prefetch take: posted here, in
++    // parallel, instead of one after another on this thread. On MoltenVK each
++    // creation costs tens to hundreds of milliseconds (the shaders go to Metal).
++    const bool skip_take = r.pipeline_take == DrawRequest::PipelineTake::kSkip;
++    if ((r.pipeline_take != DrawRequest::PipelineTake::kPrefetch && !skip_take) || !r.elements) continue;
++#else
+     if (r.pipeline_take != DrawRequest::PipelineTake::kPrefetch || !r.elements) continue;
++#endif
+     auto color = s.surfaces.find(r.color_key), depth = s.surfaces.find(r.depth_key);
+     const bool has_color = color != s.surfaces.end();
+     const bool has_depth = (r.depth_enable || r.stencil_enable) && depth != s.surfaces.end();
+     if (!has_color && !has_depth) continue;
++#if defined(__APPLE__)
++    if (skip_take) {
++      const auto& target = has_color ? color->second : depth->second;
++      if (TakeForTarget(r.pipeline_take, target.desc.width, target.desc.height) == DrawRequest::PipelineTake::kSkip)
++        continue;
++    }
++#endif
+     const uint32_t samples = has_color ? color->second.desc.samples : depth->second.desc.samples;
+     const uint64_t layout_id = r.layout_id ? r.layout_id : ElementsId(*r.elements);
+     std::array<uint32_t, 21> words{};
