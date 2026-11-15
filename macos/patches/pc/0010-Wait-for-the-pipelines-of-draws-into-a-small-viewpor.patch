@@ -1,0 +1,94 @@
+From d2a0cbbf65060c0f5754bb52d5b53a77693dad7f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Agust=C3=ADn=20Lantero=20Barreda?= <agusem@hotmail.com>
+Date: Sat, 14 Nov 2026 19:35:05 +0100
+Subject: [PATCH 10/10] Wait for the pipelines of draws into a small viewport
+
+The skip take of skip_pipeline_draws already spared small targets, which
+may be drawn once and read for the rest of the session. A draw into a
+small area of a large target can be read once too: the 320x180 capture
+of a save, drawn into a corner of the frame's surface and resolved for
+the CPU to compress into the save. Its pipeline is seldom ready, the
+draw was skipped and the save kept a thumbnail of the clear color, a
+plain magenta, which the loading screen then showed. A draw whose
+viewport is under 640x360 now waits for its pipeline like a draw into a
+small target.
+
+The first few resolves the CPU reads also go to the log, diagnostics or
+not, with the result of their write-back.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/gpu/backend/pipeline_set.h  | 10 ++++++++++
+ src/gpu/backend/vulkan/draw.inc |  6 +++---
+ src/gpu/d3d/resources.cpp       |  6 ++++++
+ 3 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/src/gpu/backend/pipeline_set.h b/src/gpu/backend/pipeline_set.h
+index 7f25498..b031159 100644
+--- a/src/gpu/backend/pipeline_set.h
++++ b/src/gpu/backend/pipeline_set.h
+@@ -61,6 +61,16 @@ constexpr DrawRequest::PipelineTake TakeForTarget(DrawRequest::PipelineTake take
+   return take == DrawRequest::PipelineTake::kSkip && (width < kSkipTargetWidth || height < kSkipTargetHeight)
+       ? DrawRequest::PipelineTake::kPrefetch : take;
+ }
++// The same for a draw into a small area of a large target: a viewport under
++// that size, like a capture drawn into a corner of the frame's surface before
++// its resolve, may be read once (the 320x180 thumbnail of a save, which the
++// CPU compresses into the save; a skipped draw left it the clear color,
++// magenta). An unset viewport (no size) counts as the whole target.
++constexpr DrawRequest::PipelineTake TakeForDraw(const DrawRequest& r, uint32_t width, uint32_t height) {
++  const auto take = TakeForTarget(r.pipeline_take, width, height);
++  if (!(r.viewport[2] > 0.0f && r.viewport[3] > 0.0f)) return take;
++  return TakeForTarget(take, uint32_t(r.viewport[2]), uint32_t(r.viewport[3]));
++}
+ 
+ class PipelineSet {
+  public:
+diff --git a/src/gpu/backend/vulkan/draw.inc b/src/gpu/backend/vulkan/draw.inc
+index 5429ccc..8903ecf 100644
+--- a/src/gpu/backend/vulkan/draw.inc
++++ b/src/gpu/backend/vulkan/draw.inc
+@@ -243,7 +243,7 @@ void Backend::PrefetchPipelines(const std::vector<DrawRequest>& requests) {
+ #if defined(__APPLE__)
+     if (skip_take) {
+       const auto& target = has_color ? color->second : depth->second;
+-      if (TakeForTarget(r.pipeline_take, target.desc.width, target.desc.height) == DrawRequest::PipelineTake::kSkip)
++      if (TakeForDraw(r, target.desc.width, target.desc.height) == DrawRequest::PipelineTake::kSkip)
+         continue;
+     }
+ #endif
+@@ -353,8 +353,8 @@ bool Backend::DrawIndexed(const DrawRequest& r, uint64_t& fence, std::string& ev
+     // The skip take (skip_pipeline_draws) posts a pipeline not ready and
+     // leaves the draw out of its frame: its constants and uploads below are
+     // applied, nothing is bound or drawn. A small target keeps the prefetch
+-    // take (TakeForTarget).
+-    auto take = s.pipeline_set.Take(key, triple, TakeForTarget(r.pipeline_take, target.desc.width, target.desc.height));
++    // take (TakeForTarget), and so does a small viewport (TakeForDraw).
++    auto take = s.pipeline_set.Take(key, triple, TakeForDraw(r, target.desc.width, target.desc.height));
+     skip_draw = take.skip;
+     // At normal priority: the draw is missing until the pipeline is ready.
+     if (take.post) s.pipeline_set.Post(key, desc, false, false);
+diff --git a/src/gpu/d3d/resources.cpp b/src/gpu/d3d/resources.cpp
+index b5a03c6..ee4a1d7 100644
+--- a/src/gpu/d3d/resources.cpp
++++ b/src/gpu/d3d/resources.cpp
+@@ -34,6 +34,7 @@
+ #include <fmt/ranges.h>
+ #include <rex/cvar.h>
+ #include <rex/hook.h>
++#include <rex/logging.h>
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/thread_state.h>
+ #include <rex/system/xthread.h>
+@@ -312,6 +313,11 @@ REX_HOOK_RAW(sub_8219D6E0) {
+     std::string writeback;
+     gpu::heap_watch::NoteResolvedLock(true, texture);  // The save crash (heap_watch.h).
+     WriteBackResolve(base, texture, writeback);
++    // The first few go to the log, diagnostics or not: a save thumbnail that
++    // comes out wrong shows whether its write-back failed or wrote a wrong image.
++    static std::atomic<uint32_t> logged_writebacks{0};
++    if (logged_writebacks.fetch_add(1, std::memory_order_relaxed) < 4)
++      REXLOG_INFO("[native-d3d] Resolve read by the CPU: {}", writeback);
+     __imp__sub_8219D6E0(ctx, base);
+     gpu::heap_watch::NoteResolvedLock(false, texture);
+     if (Diagnostics() && resolved_lock_records.fetch_add(1) < 8)

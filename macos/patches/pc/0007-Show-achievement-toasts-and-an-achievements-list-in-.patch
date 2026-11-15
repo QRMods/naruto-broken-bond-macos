@@ -1,7 +1,7 @@
 From 72e39dcc736c99f7b9fcd8a547a7c0fc2b428c5f Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:44:56 +0100
-Subject: [PATCH 7/9] Show achievement toasts and an achievements list in the
+Subject: [PATCH 07/10] Show achievement toasts and an achievements list in the
  native menus
 
 The SDK keeps the achievements (XGIUserWriteAchievements, the

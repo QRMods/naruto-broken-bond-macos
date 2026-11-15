@@ -1,7 +1,7 @@
 From 87028c9b597d711763cd1b4bb07e925bdef0bd01 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 16:38:16 +0100
-Subject: [PATCH 4/9] Create in parallel the pipelines small targets wait for
+Subject: [PATCH 04/10] Create in parallel the pipelines small targets wait for
  on macOS
 
 On MoltenVK a new graphics pipeline translates its shaders to Metal and

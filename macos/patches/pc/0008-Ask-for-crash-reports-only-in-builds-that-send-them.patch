@@ -1,7 +1,7 @@
 From ae3aba35c9535492ee644964c50f062b1c36ac57 Mon Sep 17 00:00:00 2001
 From: alantero <36408154+alantero@users.noreply.github.com>
 Date: Fri, 13 Nov 2026 18:02:34 +0100
-Subject: [PATCH 8/9] Ask for crash reports only in builds that send them
+Subject: [PATCH 08/10] Ask for crash reports only in builds that send them
 
 A build with BROKENBOND_ENABLE_SENTRY=OFF (the macOS one, which must not
 report to the PC port's project) still asked over the first frame of the
